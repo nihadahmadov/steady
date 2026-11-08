@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="light dark">
+  <meta name="theme-color" media="(prefers-color-scheme: light)" content="#f2f3ee">
+  <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#101314">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Steady">
+  <title>Steady</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon-192.png">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="shell">
+    <header class="topbar">
+      <div class="brand">Steady <span id="sync" role="status"></span></div>
+      <nav class="tabs" aria-label="Main">
+        <button class="tab" data-action="tab" data-tab="today">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="m8 12.5 2.8 2.8L16 9.8"/></svg>
+          <span>Today</span>
+        </button>
+        <button class="tab" data-action="tab" data-tab="progress">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 20v-7M12 20V5M19 20v-11"/></svg>
+          <span>Progress</span>
+        </button>
+        <button class="tab" data-action="tab" data-tab="habits">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6h11M9 12h11M9 18h11"/><path d="M4 6h.01M4 12h.01M4 18h.01"/></svg>
+          <span>Habits</span>
+        </button>
+      </nav>
+    </header>
+    <div id="notice" class="notice" role="alert" hidden></div>
+    <main id="view"></main>
+  </div>
+  <dialog id="editor" aria-label="Habit details"></dialog>
+  <script src="vendor/supabase.js"></script>
+  <script src="config.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
