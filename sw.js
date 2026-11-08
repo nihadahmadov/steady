@@ -1,6 +1,6 @@
 // Lets the app open with no internet: always try for the newest files,
 // and fall back to the last saved copy. Your habit data is not handled here.
-const CACHE = 'steady-v2';
+const CACHE = 'steady-v3';
 const FILES = [
   './', 'index.html', 'styles.css', 'app.js', 'config.js', 'vendor/supabase.js',
   'manifest.webmanifest', 'icons/icon-192.png', 'icons/apple-touch-icon.png',
@@ -15,6 +15,26 @@ self.addEventListener('activate', (event) => {
     caches.keys()
       .then((names) => Promise.all(names.filter((n) => n !== CACHE).map((n) => caches.delete(n))))
       .then(() => self.clients.claim())
+  );
+});
+
+self.addEventListener('push', (event) => {
+  const message = event.data ? event.data.json() : {};
+  event.waitUntil(self.registration.showNotification(message.title || 'Steady', {
+    body: message.body || '',
+    icon: 'icons/icon-192.png',
+    badge: 'icons/icon-192.png',
+    tag: 'daily-reminder',
+  }));
+});
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  event.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((windows) => {
+      const open = windows.find((w) => 'focus' in w);
+      return open ? open.focus() : self.clients.openWindow('./');
+    })
   );
 });
 

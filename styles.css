@@ -114,6 +114,12 @@ h1, h2, p { margin: 0; }
 #login-error { margin: 0 0 12px; font-size: 14px; }
 .account { display: flex; align-items: center; gap: 12px; margin-top: 28px; padding: 10px 10px 10px 14px; background: var(--surface); border-radius: 16px; }
 
+/* Daily reminder */
+.reminder { flex-wrap: wrap; margin-top: 0; padding: 14px; }
+.reminder .row-text { flex: 1 1 100%; }
+.time-input { flex: 1; width: auto; min-width: 0; }
+.reminder-note { text-align: left; padding: 16px; font-size: 15px; }
+
 /* Logbook */
 .shortcut { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 16px 16px 84px; }
 .amount + .shortcut { margin-top: -6px; }

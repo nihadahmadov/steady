@@ -31,6 +31,7 @@
   function normalize(d) {
     d.version = 2;
     d.meta = d.meta || { userId: null, email: '', synced: false, lastSync: 0 };
+    d.meta.reminder = d.meta.reminder || { on: false, time: '20:00' };
     d.items = d.items || {};
     d.pending = d.pending || { habits: {}, logs: {} };
     d.pending.items = d.pending.items || {};
@@ -527,6 +528,7 @@
     view.innerHTML = `
       <div class="page-head"><h1 class="page-title">Habits</h1><button class="primary" data-action="add">Add habit</button></div>
       ${rows ? `<div class="list">${rows}</div>` : `<div class="empty"><p>You have no habits yet.</p></div>`}
+      ${reminderHtml()}
       <div class="account">
         <div class="row-text"><b>${esc(data.meta.email || 'Signed in')}</b><span>Last synced: ${synced}</span></div>
         <button class="text-btn" data-action="sign-out">Sign out</button>
@@ -761,6 +763,124 @@
     if (last) editor.querySelector('.ex-list').innerHTML = last.exercises.map(exerciseRow).join('');
   }
 
+  /* ---------- Daily reminder ----------
+     The phone registers for notifications here. A scheduled job in
+     supabase/functions/send-reminders does the sending at the chosen time. */
+  const pushSupported = () => location.protocol === 'https:' && 'serviceWorker' in navigator
+    && 'PushManager' in window && 'Notification' in window;
+
+  function reminderHtml() {
+    const heading = '<h2 class="section-title">Daily reminder</h2>';
+    if (!pushSupported()) {
+      return `${heading}<div class="empty reminder-note"><p>On iPhone, reminders work in the home screen app. Add Steady to your Home Screen, then open it from that icon.</p></div>`;
+    }
+    const { on, time } = data.meta.reminder;
+    return `${heading}<div class="account reminder">
+        <div class="row-text"><b>${on ? 'Reminder on' : 'Reminder off'}</b><span>Only on days you haven't logged anything</span></div>
+        <input class="text-input time-input" id="reminder-time" type="time" value="${esc(time)}" aria-label="Reminder time">
+        <button class="primary" data-action="reminder-toggle">${on ? 'Turn off' : 'Turn on'}</button>
+      </div>
+      <p class="hint" id="reminder-msg" role="status" hidden></p>`;
+  }
+
+  function setReminderMessage(text) {
+    const el = document.getElementById('reminder-msg');
+    if (!el) return;
+    el.textContent = text;
+    el.hidden = false;
+  }
+
+  function keyBytes(base64url) {
+    const text = atob(base64url.replace(/-/g, '+').replace(/_/g, '/'));
+    return Uint8Array.from(text, (c) => c.charCodeAt(0));
+  }
+
+  async function saveSubscription(subscription) {
+    const { keys } = subscription.toJSON();
+    const { error } = await client.from('push_subscriptions').upsert({
+      endpoint: subscription.endpoint,
+      user_id: data.meta.userId,
+      p256dh: keys.p256dh,
+      auth: keys.auth,
+      tz: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
+      remind_at: data.meta.reminder.time,
+    }, { onConflict: 'endpoint' });
+    if (error) throw error;
+  }
+
+  async function turnReminderOn() {
+    const permission = await Notification.requestPermission();
+    if (permission !== 'granted') {
+      setReminderMessage('Notifications are blocked. On iPhone, go to Settings, Notifications, Steady, and allow them.');
+      return;
+    }
+    const registration = await navigator.serviceWorker.ready;
+    const subscription = await registration.pushManager.getSubscription()
+      || await registration.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: keyBytes(window.STEADY_CONFIG.vapidPublicKey),
+      });
+    await saveSubscription(subscription);
+    data.meta.reminder.on = true;
+    save();
+    render();
+    setReminderMessage(`You're set for ${data.meta.reminder.time}. It can arrive up to 5 minutes after that.`);
+  }
+
+  async function turnReminderOff() {
+    const registration = await navigator.serviceWorker.ready;
+    const subscription = await registration.pushManager.getSubscription();
+    if (subscription) {
+      const { error } = await client.from('push_subscriptions').delete().eq('endpoint', subscription.endpoint);
+      if (error) throw error;
+      await subscription.unsubscribe();
+    }
+    data.meta.reminder.on = false;
+    save();
+    render();
+  }
+
+  async function toggleReminder(button) {
+    button.disabled = true;
+    try {
+      if (data.meta.reminder.on) await turnReminderOff();
+      else await turnReminderOn();
+    } catch (e) {
+      console.warn('Reminder change failed', e);
+      setReminderMessage("That didn't work. Check your internet and try again.");
+    } finally {
+      button.disabled = false;
+    }
+  }
+
+  async function changeReminderTime(value) {
+    if (!/^\d{2}:\d{2}$/.test(value)) return;
+    data.meta.reminder.time = value;
+    save();
+    if (!data.meta.reminder.on) return;
+    try {
+      const registration = await navigator.serviceWorker.ready;
+      const subscription = await registration.pushManager.getSubscription();
+      if (subscription) await saveSubscription(subscription);
+      setReminderMessage(`Reminder moved to ${value}.`);
+    } catch (e) {
+      console.warn('Reminder time change failed', e);
+      setReminderMessage("Couldn't save the new time. Check your internet and try again.");
+    }
+  }
+
+  // Keeps the registration current, for example after travelling to a new time zone.
+  async function refreshReminder() {
+    if (!data.meta.reminder.on || !pushSupported() || Notification.permission !== 'granted') return;
+    try {
+      const registration = await navigator.serviceWorker.ready;
+      const subscription = await registration.pushManager.getSubscription();
+      if (subscription) await saveSubscription(subscription);
+    } catch (e) {
+      console.warn('Reminder refresh failed', e);
+    }
+  }
+
   /* ---------- Sign-in screen ---------- */
   let loginMode = 'signin';
   let loginEmail = '';
@@ -830,6 +950,7 @@
       needsLogin = false;
       if (wasSignedOut) render();
       if (event === 'INITIAL_SESSION' || event === 'SIGNED_IN') syncNow();
+      if (event === 'INITIAL_SESSION') refreshReminder();
       return;
     }
     // With no internet the session can't be refreshed. That isn't the same as being signed out.
@@ -850,6 +971,9 @@
       delete button.dataset.armed;
       button.textContent = 'Not synced yet, check internet';
       return;
+    }
+    if (data.meta.reminder.on && pushSupported()) {
+      try { await turnReminderOff(); } catch (e) { console.warn('Could not turn off reminder', e); }
     }
     data = defaults();
     save();
@@ -1061,6 +1185,9 @@
       case 'cancel':
         editor.close();
         break;
+      case 'reminder-toggle':
+        toggleReminder(el);
+        break;
       case 'log-kind':
         logKind = id;
         render();
@@ -1121,6 +1248,10 @@
       e.preventDefault();
       submitLogin(e.target);
     }
+  });
+
+  document.addEventListener('change', (e) => {
+    if (e.target.id === 'reminder-time') changeReminderTime(e.target.value);
   });
 
   editor.addEventListener('close', () => { if (renderWaiting) render(); });
