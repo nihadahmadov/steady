@@ -1,6 +1,6 @@
 // Lets the app open with no internet: always try for the newest files,
 // and fall back to the last saved copy. Your habit data is not handled here.
-const CACHE = 'steady-v1';
+const CACHE = 'steady-v2';
 const FILES = [
   './', 'index.html', 'styles.css', 'app.js', 'config.js', 'vendor/supabase.js',
   'manifest.webmanifest', 'icons/icon-192.png', 'icons/apple-touch-icon.png',

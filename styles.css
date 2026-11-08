@@ -114,6 +114,23 @@ h1, h2, p { margin: 0; }
 #login-error { margin: 0 0 12px; font-size: 14px; }
 .account { display: flex; align-items: center; gap: 12px; margin-top: 28px; padding: 10px 10px 10px 14px; background: var(--surface); border-radius: 16px; }
 
+/* Logbook */
+.shortcut { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 16px 16px 84px; }
+.amount + .shortcut { margin-top: -6px; }
+.shortcut-btn { min-height: 36px; max-width: 100%; padding: 6px 12px; border-radius: 12px; background: rgba(255, 255, 255, 0.62); color: var(--on-fill); font-size: 14px; font-weight: 650; text-align: left; overflow-wrap: anywhere; }
+.shortcut-btn:focus-visible { outline-color: var(--on-fill); }
+.row-btn { width: 100%; text-align: left; }
+.row-btn:hover { background: var(--surface-2); }
+.row-figure { flex: none; font-size: 15px; font-weight: 750; font-variant-numeric: tabular-nums; padding-right: 6px; }
+.stars { color: var(--muted); letter-spacing: 1px; font-size: 14px; }
+.log-summary { margin: 0 0 12px; }
+.ex-row { display: grid; grid-template-columns: repeat(3, 1fr) 40px; gap: 6px; align-items: end; padding-bottom: 12px; margin-bottom: 12px; border-bottom: 1px solid var(--line); }
+.ex-name { grid-column: 1 / -1; }
+.ex-num span { display: block; font-size: 12px; font-weight: 600; color: var(--muted); margin-bottom: 3px; }
+.ex-num .text-input { padding: 0 10px; }
+.ex-remove { font-size: 22px; color: var(--muted); }
+.ex-buttons { display: flex; flex-wrap: wrap; justify-content: space-between; margin-bottom: 10px; }
+
 /* Today */
 .day-head { display: flex; align-items: center; gap: 8px; margin: 12px 0 14px; }
 .day-title { flex: 1; min-width: 0; }

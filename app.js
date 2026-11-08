@@ -6,6 +6,13 @@
   const EMOJIS = ['🏋️', '📚', '🎬', '🏃', '🚴', '🏊', '🧘', '🚶', '💧', '🥗', '😴', '✍️', '🎸', '🧠', '🌱', '☀️'];
   const TICK = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12.5 4.6 4.6L19 7.6"/></svg>';
   const DEFAULT_IDS = ['gym', 'reading', 'film', 'cardio'];
+  // Logbook entries belong to a kind, and each kind is linked to one starter habit.
+  const KINDS = {
+    film: { one: 'film', many: 'Films', emoji: '🎬', habit: 'film' },
+    book: { one: 'book', many: 'Books', emoji: '📚', habit: 'reading' },
+    workout: { one: 'workout', many: 'Workouts', emoji: '🏋️', habit: 'gym' },
+  };
+  const kindOfHabit = (habitId) => Object.keys(KINDS).find((k) => KINDS[k].habit === habitId);
 
   const view = document.getElementById('view');
   const editor = document.getElementById('editor');
@@ -24,7 +31,9 @@
   function normalize(d) {
     d.version = 2;
     d.meta = d.meta || { userId: null, email: '', synced: false, lastSync: 0 };
+    d.items = d.items || {};
     d.pending = d.pending || { habits: {}, logs: {} };
+    d.pending.items = d.pending.items || {};
     d.habits.forEach((h, i) => { if (typeof h.pos !== 'number') h.pos = i; });
     return d;
   }
@@ -122,6 +131,18 @@
     scheduleSync();
   }
 
+  function touchItem(item, deleted) {
+    item.t = tick();
+    const payload = item.kind === 'workout'
+      ? { exercises: item.exercises }
+      : { title: item.title, rating: item.rating };
+    data.pending.items[item.id] = {
+      user_id: data.meta.userId, id: item.id, kind: item.kind, day: item.day,
+      payload, deleted: Boolean(deleted), t: item.t,
+    };
+    scheduleSync();
+  }
+
   function scheduleSync() {
     clearTimeout(syncTimer);
     syncTimer = setTimeout(syncNow, 800);
@@ -160,7 +181,7 @@
     });
   }
 
-  function mergeCloud(habitRows, logRows) {
+  function mergeCloud(habitRows, logRows, itemRows) {
     let changed = false;
     if (!data.meta.synced) {
       queueEverythingLocal(habitRows.length > 0);
@@ -210,6 +231,23 @@
       data.logs[r.day][r.habit_id] = { v: r.value, t: r.t };
       changed = true;
     });
+
+    itemRows.forEach((r) => {
+      clock = Math.max(clock, r.t);
+      const queued = data.pending.items[r.id];
+      if (queued) {
+        if (queued.t > r.t) return;
+        delete data.pending.items[r.id];
+      }
+      const current = data.items[r.id];
+      if (r.deleted) {
+        if (current) { delete data.items[r.id]; changed = true; }
+        return;
+      }
+      if (current && current.t === r.t) return;
+      data.items[r.id] = Object.assign({ id: r.id, kind: r.kind, day: r.day, t: r.t }, r.payload);
+      changed = true;
+    });
     return changed;
   }
 
@@ -227,7 +265,7 @@
     }
   }
 
-  const pendingCount = () => Object.keys(data.pending.habits).length + Object.keys(data.pending.logs).length;
+  const pendingCount = () => ['habits', 'logs', 'items'].reduce((n, q) => n + Object.keys(data.pending[q]).length, 0);
 
   async function syncNow() {
     if (!client || needsLogin || !data.meta.userId) return;
@@ -236,14 +274,16 @@
     syncing = true;
     setSyncText('Syncing…');
     try {
-      const [habitRows, logRows] = await Promise.all([
+      const [habitRows, logRows, itemRows] = await Promise.all([
         fetchAll('habits', ['id']),
         fetchAll('logs', ['day', 'habit_id']),
+        fetchAll('items', ['id']),
       ]);
-      const changed = mergeCloud(habitRows, logRows);
+      const changed = mergeCloud(habitRows, logRows, itemRows);
       save();
       await uploadQueue('habits', data.pending.habits, 'user_id,id');
       await uploadQueue('logs', data.pending.logs, 'user_id,day,habit_id');
+      await uploadQueue('items', data.pending.items, 'user_id,id');
       data.meta.lastSync = Date.now();
       save();
       setSyncText('Synced');
@@ -362,7 +402,7 @@
           <span class="emoji" aria-hidden="true">${esc(h.emoji)}</span>
           <span class="card-text"><span class="name">${esc(h.name)}</span><span class="status">${esc(cardStatus(h, day))}</span></span>
           <span class="tick">${TICK}</span>
-        </button>${amount}
+        </button>${amount}${entry ? cardShortcut(h, day) : ''}
       </article>`;
     }).join('');
 
@@ -493,6 +533,234 @@
       </div>`;
   }
 
+  /* ---------- Logbook: films, books and workouts ---------- */
+  let logKind = 'film';
+  let editingKind = null;
+
+  const itemsOf = (kind) => Object.values(data.items)
+    .filter((i) => i.kind === kind)
+    .sort((a, b) => b.day.localeCompare(a.day) || b.t - a.t);
+  const shortDate = (k) => fmtDate(k, { day: 'numeric', month: 'short', year: 'numeric' });
+  const stars = (n) => (n ? '★'.repeat(n) : '');
+  const exerciseCount = (w) => plural(w.exercises.length, 'exercise');
+
+  function cardShortcut(h, day) {
+    const kind = kindOfHabit(h.id);
+    if (!kind) return '';
+    const entries = itemsOf(kind).filter((i) => i.day === day);
+    if (kind === 'workout') {
+      return `<div class="shortcut">${entries.length
+        ? entries.map((w) => `<button class="shortcut-btn" data-action="edit-entry" data-entry="${esc(w.id)}">${exerciseCount(w)} logged</button>`).join('')
+        : `<button class="shortcut-btn" data-action="add-entry" data-kind="workout" data-day="${day}">+ Log workout</button>`}</div>`;
+    }
+    const chips = entries.map((i) => `<button class="shortcut-btn" data-action="edit-entry" data-entry="${esc(i.id)}">${esc(i.title)}${i.rating ? ` ${stars(i.rating)}` : ''}</button>`).join('');
+    return `<div class="shortcut">${chips}<button class="shortcut-btn" data-action="add-entry" data-kind="${kind}" data-day="${day}">+ Add ${KINDS[kind].one}</button></div>`;
+  }
+
+  function strengthHtml() {
+    const records = {};
+    itemsOf('workout').reverse().forEach((w) => {
+      const bestToday = {};
+      w.exercises.forEach((e) => {
+        if (!e.weight) return;
+        const key = e.name.trim().toLowerCase();
+        if (!bestToday[key] || e.weight > bestToday[key].weight) bestToday[key] = e;
+      });
+      Object.entries(bestToday).forEach(([key, e]) => {
+        const r = records[key] || (records[key] = { name: e.name, first: e.weight, firstDay: w.day, best: 0, sessions: 0 });
+        r.last = e.weight;
+        r.best = Math.max(r.best, e.weight);
+        r.sessions++;
+      });
+    });
+    const rows = Object.values(records).sort((a, b) => b.sessions - a.sessions).map((r) => {
+      const change = r.last - r.first;
+      const since = fmtDate(r.firstDay, { day: 'numeric', month: 'short' });
+      let trend = `${change > 0 ? '+' : '−'}${fmtNum(Math.abs(change))} kg since ${since}`;
+      if (r.sessions < 2) trend = 'First session';
+      else if (change === 0) trend = `Same as ${since}`;
+      return `<div class="row"><div class="row-text"><b>${esc(r.name)}</b><span>${trend} · best ${fmtNum(r.best)} kg · ${plural(r.sessions, 'session')}</span></div><div class="row-figure">${fmtNum(r.last)} kg</div></div>`;
+    }).join('');
+    return rows ? `<h2 class="section-title">Getting stronger</h2><div class="list">${rows}</div><h2 class="section-title">Recent workouts</h2>` : '';
+  }
+
+  function renderLogbook() {
+    const kind = KINDS[logKind];
+    const list = itemsOf(logKind);
+    const chips = Object.keys(KINDS).map((k) => `<button class="chip${k === logKind ? ' is-active' : ''}" data-action="log-kind" data-id="${k}">${KINDS[k].emoji} ${KINDS[k].many}</button>`).join('');
+    const rows = list.map((i) => `<button class="row row-btn" data-action="edit-entry" data-entry="${esc(i.id)}">
+        <span class="row-text"><b>${esc(i.kind === 'workout' ? shortDate(i.day) : i.title)}</b><span>${esc(i.kind === 'workout' ? i.exercises.map((e) => e.name).join(', ') : shortDate(i.day))}</span></span>
+        ${i.rating ? `<span class="row-figure stars" aria-label="${i.rating} out of 5">${stars(i.rating)}</span>` : ''}
+      </button>`).join('');
+    let summary = '';
+    if (list.length && logKind !== 'workout') {
+      const rated = list.filter((i) => i.rating);
+      const average = rated.length ? ` · average ${fmtNum(rated.reduce((n, i) => n + i.rating, 0) / rated.length)}★` : '';
+      summary = `<p class="hint log-summary">${plural(list.length, kind.one)}${average}</p>`;
+    }
+    view.innerHTML = `
+      <div class="page-head"><h1 class="page-title">Logbook</h1><button class="primary" data-action="add-entry" data-kind="${logKind}">Add ${kind.one}</button></div>
+      <div class="chips">${chips}</div>
+      ${summary}
+      ${list.length
+        ? `${logKind === 'workout' ? strengthHtml() : ''}<div class="list">${rows}</div>`
+        : `<div class="empty"><p>No ${kind.many.toLowerCase()} yet. Add your first one above.</p></div>`}`;
+  }
+
+  function dialogActions(canDelete) {
+    return `<p class="field-hint danger" id="form-error" hidden></p>
+      <div class="dialog-actions">
+        ${canDelete ? '<button type="button" class="text-btn danger" data-action="entry-delete">Delete</button>' : ''}
+        <div class="spacer"></div>
+        <button type="button" class="text-btn" data-action="cancel">Cancel</button>
+        <button type="submit" class="primary">Save</button>
+      </div>`;
+  }
+
+  function openEntry(kind, id, day) {
+    editingKind = kind;
+    editingId = id || null;
+    const existing = id ? data.items[id] : null;
+    const date = existing ? existing.day : (day || todayKey());
+    const dateField = `<label class="field"><span class="field-label">Date</span>
+      <input class="text-input" type="date" name="day" max="${todayKey()}" value="${date}" required></label>`;
+
+    if (kind === 'workout') {
+      const names = [...new Set(itemsOf('workout').flatMap((w) => w.exercises.map((e) => e.name)))];
+      const exercises = existing ? existing.exercises : [{}];
+      editor.innerHTML = `<form id="workout-form" novalidate>
+        <h2>${existing ? 'Edit workout' : 'Log workout'}</h2>
+        ${dateField}
+        <div class="ex-list">${exercises.map(exerciseRow).join('')}</div>
+        <datalist id="exercise-names">${names.map((n) => `<option value="${esc(n)}"></option>`).join('')}</datalist>
+        <div class="ex-buttons">
+          <button type="button" class="text-btn" data-action="add-exercise">+ Add exercise</button>
+          ${!existing && itemsOf('workout').length ? '<button type="button" class="text-btn" data-action="copy-workout">Copy last workout</button>' : ''}
+        </div>
+        ${dialogActions(Boolean(existing))}
+      </form>`;
+    } else {
+      const rating = existing ? existing.rating : 0;
+      const ratings = [0, 1, 2, 3, 4, 5].map((n) => `<label class="choice num"><input type="radio" name="rating" value="${n}" ${n === rating ? 'checked' : ''}><span>${n ? `${n}★` : 'None'}</span></label>`).join('');
+      editor.innerHTML = `<form id="entry-form" novalidate>
+        <h2>${existing ? `Edit ${KINDS[kind].one}` : `Add ${KINDS[kind].one}`}</h2>
+        <label class="field"><span class="field-label">Title</span>
+          <input class="text-input" name="entry_title" maxlength="100" required autocomplete="off" value="${esc(existing ? existing.title : '')}"></label>
+        <fieldset class="field"><legend class="field-label">Your rating</legend><div class="choices">${ratings}</div></fieldset>
+        ${dateField}
+        ${dialogActions(Boolean(existing))}
+      </form>`;
+    }
+    editor.showModal();
+    editor.scrollTop = 0;
+    if (!existing && kind !== 'workout') editor.querySelector('[name=entry_title]').focus();
+  }
+
+  function exerciseRow(e) {
+    const num = (v) => (v === null || v === undefined ? '' : v);
+    return `<div class="ex-row">
+      <input class="text-input ex-name" name="ex_name" maxlength="60" list="exercise-names" placeholder="Exercise, e.g. Bench press" aria-label="Exercise name" autocomplete="off" value="${esc(e.name || '')}">
+      <label class="ex-num"><span>Sets</span><input class="text-input" name="ex_sets" type="number" inputmode="numeric" min="0" value="${num(e.sets)}"></label>
+      <label class="ex-num"><span>Reps</span><input class="text-input" name="ex_reps" type="number" inputmode="numeric" min="0" value="${num(e.reps)}"></label>
+      <label class="ex-num"><span>kg</span><input class="text-input" name="ex_weight" type="number" inputmode="decimal" min="0" step="any" value="${num(e.weight)}"></label>
+      <button type="button" class="icon-btn ex-remove" data-action="remove-exercise" aria-label="Remove exercise">×</button>
+    </div>`;
+  }
+
+  function formError(form, text) {
+    const el = form.querySelector('#form-error');
+    el.textContent = text;
+    el.hidden = false;
+  }
+
+  function validDay(form, value) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(value) || value > todayKey()) {
+      formError(form, 'Please choose a date that is not in the future.');
+      return false;
+    }
+    return true;
+  }
+
+  function storeEntry(fields) {
+    const existing = editingId ? data.items[editingId] : null;
+    const item = existing || { id: 'i' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7), kind: editingKind };
+    Object.assign(item, fields);
+    data.items[item.id] = item;
+    touchItem(item, false);
+    // A new entry means the habit happened that day, so tick it if it isn't already.
+    const habit = data.habits.find((h) => h.id === KINDS[item.kind].habit);
+    if (!existing && habit && !isDone(habit.id, item.day)) {
+      data.logs[item.day] = data.logs[item.day] || {};
+      data.logs[item.day][habit.id] = { v: null };
+      touchLog(item.day, habit.id);
+    }
+    save();
+    editor.close();
+    render();
+  }
+
+  function submitEntry(form) {
+    const fields = new FormData(form);
+    const title = String(fields.get('entry_title')).trim();
+    const day = String(fields.get('day'));
+    if (!title) {
+      formError(form, 'Please enter a title.');
+      form.querySelector('[name=entry_title]').focus();
+      return;
+    }
+    if (!validDay(form, day)) return;
+    storeEntry({ title, day, rating: Number(fields.get('rating')) || 0 });
+  }
+
+  function submitWorkout(form) {
+    const day = form.querySelector('[name=day]').value;
+    if (!validDay(form, day)) return;
+    const number = (row, name) => {
+      const v = parseFloat(row.querySelector(`[name=${name}]`).value);
+      return Number.isFinite(v) && v >= 0 ? v : null;
+    };
+    const exercises = [...form.querySelectorAll('.ex-row')]
+      .map((row) => ({
+        name: row.querySelector('[name=ex_name]').value.trim(),
+        sets: number(row, 'ex_sets'),
+        reps: number(row, 'ex_reps'),
+        weight: number(row, 'ex_weight'),
+      }))
+      .filter((e) => e.name);
+    if (!exercises.length) {
+      formError(form, 'Please add at least one exercise.');
+      return;
+    }
+    storeEntry({ day, exercises });
+  }
+
+  function deleteEntry(button) {
+    if (!button.dataset.armed) {
+      button.dataset.armed = '1';
+      button.textContent = 'Tap again to delete';
+      return;
+    }
+    const item = data.items[editingId];
+    if (item) {
+      touchItem(item, true);
+      delete data.items[editingId];
+    }
+    save();
+    editor.close();
+    render();
+  }
+
+  function addExerciseRow(e) {
+    const list = editor.querySelector('.ex-list');
+    list.insertAdjacentHTML('beforeend', exerciseRow(e || {}));
+    list.lastElementChild.querySelector('[name=ex_name]').focus();
+  }
+
+  function copyLastWorkout() {
+    const last = itemsOf('workout')[0];
+    if (last) editor.querySelector('.ex-list').innerHTML = last.exercises.map(exerciseRow).join('');
+  }
+
   /* ---------- Sign-in screen ---------- */
   let loginMode = 'signin';
   let loginEmail = '';
@@ -606,6 +874,7 @@
       else b.removeAttribute('aria-current');
     });
     if (tab === 'progress') renderProgress();
+    else if (tab === 'logbook') renderLogbook();
     else if (tab === 'habits') renderHabits();
     else renderToday();
   }
@@ -792,6 +1061,32 @@
       case 'cancel':
         editor.close();
         break;
+      case 'log-kind':
+        logKind = id;
+        render();
+        refocus('log-kind', id);
+        break;
+      case 'add-entry':
+        openEntry(el.dataset.kind, null, el.dataset.day);
+        break;
+      case 'edit-entry': {
+        const item = data.items[el.dataset.entry];
+        if (item) openEntry(item.kind, item.id);
+        break;
+      }
+      case 'entry-delete':
+        deleteEntry(el);
+        break;
+      case 'add-exercise':
+        addExerciseRow();
+        break;
+      case 'remove-exercise':
+        el.closest('.ex-row').remove();
+        if (!editor.querySelector('.ex-row')) addExerciseRow();
+        break;
+      case 'copy-workout':
+        copyLastWorkout();
+        break;
       case 'login-mode':
         loginEmail = view.querySelector('[name=email]').value.trim();
         loginMode = loginMode === 'create' ? 'signin' : 'create';
@@ -816,6 +1111,12 @@
     if (e.target.id === 'habit-form') {
       e.preventDefault();
       submitEditor(e.target);
+    } else if (e.target.id === 'entry-form') {
+      e.preventDefault();
+      submitEntry(e.target);
+    } else if (e.target.id === 'workout-form') {
+      e.preventDefault();
+      submitWorkout(e.target);
     } else if (e.target.id === 'login-form') {
       e.preventDefault();
       submitLogin(e.target);
@@ -853,7 +1154,7 @@
   /* ---------- Start ---------- */
   function tabFromAddress() {
     const wanted = location.hash.slice(1);
-    if (['today', 'progress', 'habits'].includes(wanted)) tab = wanted;
+    if (['today', 'progress', 'logbook', 'habits'].includes(wanted)) tab = wanted;
   }
   window.addEventListener('hashchange', () => {
     tabFromAddress();
